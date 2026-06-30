@@ -1,25 +1,33 @@
 /* ==========================================================================
-   HEARTSPACE CORE APPLICATION LOGIC (FIREBASE SYNC & REALTIME EDITION)
+   HEARTSPACE CORE APPLICATION LOGIC (FIREBASE SYNC WITH LOCAL STORAGE FALLBACK)
    ========================================================================== */
 
 // --- 1. FIREBASE CONFIGURATION & INITIALIZATION ---
 
-// Using a public sandbox Realtime Database hosted for the HeartSpace project
+// Placeholder Firebase Configuration. Replace with your actual Firebase project settings.
 const firebaseConfig = {
     databaseURL: "https://gemini-antigravity-default-rtdb.firebaseio.com"
 };
 
-// Initialize Firebase
-firebase.initializeApp(firebaseConfig);
-const db = firebase.database();
+let db = null;
+let firebaseActive = false;
+
+try {
+    firebase.initializeApp(firebaseConfig);
+    db = firebase.database();
+    firebaseActive = true;
+} catch (e) {
+    console.warn("Firebase failed to initialize. Falling back to local storage mode.", e);
+}
 
 // --- 2. GLOBAL STATE ---
 
 let state = {
     currentUser: null,       // Loaded from LocalStorage: { name, groupCode, lineId, igUsername, mood }
     groupCode: null,         // Active friendship space identifier
-    posts: [],               // Synced from Firebase groups/groupCode/posts
-    friends: {}              // Synced from Firebase groups/groupCode/users
+    posts: [],               // Synced posts (hybrid)
+    friends: {},             // Synced users (hybrid)
+    isFirebaseConnected: false
 };
 
 const MOODS = {
@@ -29,6 +37,34 @@ const MOODS = {
     busy: { label: '瘋狂忙碌', emoji: '🔥', color: '#f28482', status: '被死線追趕，暫時無法分神...' },
     emo: { label: '心碎沮喪', emoji: '🌧️', color: '#90e0ef', status: '需要一點溫暖，今天有點小 emo。' }
 };
+
+// Prepopulated Default Posts for offline fallback
+const DEFAULT_POSTS = [
+    {
+        id: 'post_1',
+        authorName: 'Yuki',
+        type: 'photo',
+        content: '忙裡偷閒！這家巷弄裡的咖啡館特別安靜，肉桂捲超級美味。點了一杯卡布奇諾，看完了半本書。送一隻雲端肉桂捲給你們 🥐☕',
+        mediaData: 'https://images.unsplash.com/photo-1509042239860-f550ce710b93?w=600&auto=format&fit=crop&q=80',
+        timestamp: '今天 14:32',
+        mood: 'relaxed',
+        reactions: { love: { 'Alan': true, '我': true } },
+        comments: {
+            'c1': { authorName: 'Alan', text: '天哪！肉桂捲看起來太犯規了，求店名！', timestamp: '14:40' }
+        }
+    },
+    {
+        id: 'post_2',
+        authorName: 'Alan',
+        type: 'voice',
+        content: '給大家聽聽我這邊窗外的雨聲，伴隨著鍵盤聲，還蠻舒壓的。希望大家今天一切順利，加油啦！',
+        mediaData: 'MOCK_AUDIO_ALAN', 
+        timestamp: '今天 12:15',
+        mood: 'tired',
+        reactions: { support: { '我': true } },
+        comments: {}
+    }
+];
 
 // --- 3. ONBOARDING & INITIALIZATION ---
 
@@ -47,21 +83,20 @@ function initApp() {
         state.currentUser = JSON.parse(savedProfile);
         state.groupCode = state.currentUser.groupCode;
         
-        // If invite parameters are different, prompt update or auto join
+        // If invite parameters are different, prompt update
         if (inviteCode && inviteCode !== state.groupCode) {
             if (confirm(`偵測到新的邀請連結！要從目前的群組「${state.groupCode}」切換至「${inviteCode}」嗎？`)) {
                 state.currentUser.groupCode = inviteCode;
                 state.groupCode = inviteCode;
                 localStorage.setItem('heartspace_user_profile', JSON.stringify(state.currentUser));
-                // Clear URL parameters for cleanliness
                 window.history.replaceState({}, document.title, window.location.pathname);
             }
         }
         
+        loadLocalCache();
         connectToFirebase();
         setupEventListeners();
     } else {
-        // Open Onboarding welcome Modal
         const onboardModal = document.getElementById('onboard-modal');
         onboardModal.classList.remove('hidden');
         
@@ -73,7 +108,31 @@ function initApp() {
     }
 }
 
-// Setup listeners specifically for onboarding
+function loadLocalCache() {
+    const savedPosts = localStorage.getItem(`heartspace_posts_${state.groupCode}`);
+    const savedFriends = localStorage.getItem(`heartspace_friends_${state.groupCode}`);
+    
+    if (savedPosts) {
+        state.posts = JSON.parse(savedPosts);
+    } else {
+        state.posts = [...DEFAULT_POSTS];
+    }
+    
+    if (savedFriends) {
+        state.friends = JSON.parse(savedFriends);
+    }
+    
+    updateProfileUI();
+    renderFriendsList();
+    renderFeed('all');
+}
+
+function saveLocalCache() {
+    localStorage.setItem(`heartspace_posts_${state.groupCode}`, JSON.stringify(state.posts));
+    localStorage.setItem(`heartspace_friends_${state.groupCode}`, JSON.stringify(state.friends));
+}
+
+// Setup onboarding listeners
 function setupOnboardingListeners() {
     const startBtn = document.getElementById('start-onboard-btn');
     startBtn.onclick = () => {
@@ -87,37 +146,79 @@ function setupOnboardingListeners() {
             return;
         }
         
-        // Build User Profile
         state.currentUser = {
             name: nameInput,
             groupCode: inviteInput,
             lineId: lineInput,
             igUsername: igInput,
-            mood: 'relaxed' // Default mood
+            mood: 'relaxed'
         };
         state.groupCode = inviteInput;
         
-        // Save to LocalStorage
         localStorage.setItem('heartspace_user_profile', JSON.stringify(state.currentUser));
-        
-        // Hide modal
         document.getElementById('onboard-modal').classList.add('hidden');
         
-        // Connect and build
+        loadLocalCache();
         connectToFirebase();
         setupEventListeners();
         
-        // Clear url parameters if present
         window.history.replaceState({}, document.title, window.location.pathname);
     };
 }
 
-// --- 4. FIREBASE CONNECTIVITY & LISTENERS ---
+// --- 4. FIREBASE CONNECTIVITY & HYBRID FALLBACK ---
+
+let connectionWatchdog = null;
 
 function connectToFirebase() {
     document.getElementById('active-space-name').textContent = `空間: ${state.groupCode}`;
     
-    // Register current user's profile on Firebase Database under this group
+    if (!firebaseActive || !db) {
+        updateOfflineUI();
+        return;
+    }
+    
+    // Set a watchdog timer (2.5s) to detect connection failure / invalid database URL
+    connectionWatchdog = setTimeout(() => {
+        if (!state.isFirebaseConnected) {
+            console.warn("Firebase connection timeout. Staying in offline-cache mode.");
+            updateOfflineUI();
+        }
+    }, 2500);
+    
+    // Watch connection status
+    db.ref(".info/connected").on("value", (snap) => {
+        if (snap.val() === true) {
+            state.isFirebaseConnected = true;
+            clearTimeout(connectionWatchdog);
+            document.getElementById('active-space-name').innerHTML = `<i class="fa-solid fa-cloud" style="color:var(--color-mood-relaxed)"></i> 雲端空間: ${state.groupCode}`;
+            
+            // Sync user profile
+            syncUserProfileToCloud();
+            // Start listening to live feed
+            listenToCloudData();
+        } else {
+            state.isFirebaseConnected = false;
+            // Don't trigger offline UI immediately, wait for watchdog if initial
+        }
+    });
+}
+
+function updateOfflineUI() {
+    document.getElementById('active-space-name').innerHTML = `<i class="fa-solid fa-cloud-slash" style="color:var(--color-mood-tired)"></i> 本地空間: ${state.groupCode}`;
+    
+    // Pre-populate mock friends in local radar if empty to make it look active
+    if (Object.keys(state.friends).length === 0) {
+        state.friends = {
+            'Yuki': { name: 'Yuki', mood: 'relaxed', status: '在咖啡廳躲雨 ☕', lastActive: Date.now() - 300000, lineId: 'yuki_line', igUsername: 'yuki_ig' },
+            'Alan': { name: 'Alan', mood: 'tired', status: '加班除錯中... 💻', lastActive: Date.now() - 3600000, lineId: 'alan_line', igUsername: 'alan_ig' }
+        };
+        saveLocalCache();
+        renderFriendsList();
+    }
+}
+
+function syncUserProfileToCloud() {
     const userRef = db.ref(`groups/${state.groupCode}/users/${state.currentUser.name}`);
     userRef.set({
         name: state.currentUser.name,
@@ -127,17 +228,17 @@ function connectToFirebase() {
         lastActive: Date.now()
     });
     
-    // Auto-update last active timestamp on disconnect
     userRef.onDisconnect().update({
         lastActive: firebase.database.ServerValue.TIMESTAMP
     });
-    
-    // Watch Database for Posts Updates
+}
+
+function listenToCloudData() {
+    // Sync Posts
     db.ref(`groups/${state.groupCode}/posts`).on('value', (snapshot) => {
         const data = snapshot.val();
         state.posts = [];
         if (data) {
-            // Convert object map to sorted array (newest first)
             Object.keys(data).forEach(key => {
                 state.posts.push({
                     id: key,
@@ -145,16 +246,22 @@ function connectToFirebase() {
                 });
             });
             state.posts.sort((a, b) => b.createdAt - a.createdAt);
+        } else {
+            state.posts = [...DEFAULT_POSTS];
         }
+        saveLocalCache();
         renderFeed(document.querySelector('.filter-btn.active').dataset.filter);
     });
     
-    // Watch Database for Users (Friends) updates
+    // Sync Users
     db.ref(`groups/${state.groupCode}/users`).on('value', (snapshot) => {
         const data = snapshot.val();
-        state.friends = data || {};
-        updateProfileUI();
-        renderFriendsList();
+        if (data) {
+            state.friends = data;
+            saveLocalCache();
+            updateProfileUI();
+            renderFriendsList();
+        }
     });
 }
 
@@ -198,13 +305,11 @@ function updateProfileUI() {
     nameEl.textContent = state.currentUser.name;
     subEl.textContent = `@${state.groupCode} 空間房主`;
     
-    // Get current mood from active state
     const currentMood = state.currentUser.mood;
     const moodColor = MOODS[currentMood]?.color || '#83c5be';
     glow.style.backgroundColor = moodColor;
     glow.style.boxShadow = `0 0 20px ${moodColor}`;
     
-    // Update active state in mood selection buttons
     document.querySelectorAll('.mood-btn').forEach(btn => {
         if (btn.dataset.mood === currentMood) {
             btn.classList.add('active');
@@ -235,12 +340,11 @@ function renderFriendsList() {
         const friend = state.friends[friendName];
         const moodObj = MOODS[friend.mood] || { label: '平靜', emoji: '☕', color: '#83c5be', status: '放鬆休息中' };
         
-        // Calculate status time
         let activeStatusText = '離線';
-        const isOnline = (Date.now() - friend.lastActive) < 120000; // Active within 2 minutes
+        const isOnline = (Date.now() - friend.lastActive) < 120000;
         
         if (isOnline) {
-            activeStatusText = moodObj.status || '線上活躍中';
+            activeStatusText = friend.status || moodObj.status || '線上活躍中';
         } else {
             const diffMin = Math.floor((Date.now() - friend.lastActive) / 60000);
             if (diffMin < 60) {
@@ -251,7 +355,6 @@ function renderFriendsList() {
             }
         }
         
-        // LINE/IG URL schemes
         const lineHref = friend.lineId ? `https://line.me/ti/p/~${friend.lineId}` : '#';
         const igHref = friend.igUsername ? `https://instagram.com/_u/${friend.igUsername}/` : '#';
         
@@ -302,7 +405,6 @@ function renderFeed(filter = 'all') {
     filteredPosts.forEach(post => {
         const moodObj = MOODS[post.mood] || { label: '平靜', emoji: '☕', color: '#83c5be' };
         
-        // Build post content media element
         let mediaHtml = '';
         if (post.type === 'photo' && post.mediaData) {
             mediaHtml = `
@@ -333,19 +435,16 @@ function renderFeed(filter = 'all') {
             `;
         }
         
-        // Build reactions counts
         const rHeart = post.reactions && post.reactions.love ? Object.keys(post.reactions.love).length : 0;
         const rHug = post.reactions && post.reactions.hug ? Object.keys(post.reactions.hug).length : 0;
         const rSupport = post.reactions && post.reactions.support ? Object.keys(post.reactions.support).length : 0;
         const rCoffee = post.reactions && post.reactions.coffee ? Object.keys(post.reactions.coffee).length : 0;
         
-        // Check if current user reacted
         const hasHeart = post.reactions && post.reactions.love && post.reactions.love[state.currentUser.name] ? 'reacted' : '';
         const hasHug = post.reactions && post.reactions.hug && post.reactions.hug[state.currentUser.name] ? 'reacted' : '';
         const hasSupport = post.reactions && post.reactions.support && post.reactions.support[state.currentUser.name] ? 'reacted' : '';
         const hasCoffee = post.reactions && post.reactions.coffee && post.reactions.coffee[state.currentUser.name] ? 'reacted' : '';
         
-        // Build comments list
         let commentsHtml = '';
         if (post.comments) {
             const commentsArray = Object.keys(post.comments).map(k => post.comments[k]);
@@ -365,7 +464,6 @@ function renderFeed(filter = 'all') {
         
         const cardHtml = `
             <div class="glass-card post-card" id="post-${post.id}">
-                <!-- Author Header -->
                 <div class="post-header">
                     <div class="post-author-info">
                         <div class="post-author-avatar-container">
@@ -383,15 +481,12 @@ function renderFeed(filter = 'all') {
                     </div>
                 </div>
                 
-                <!-- Main Body -->
                 <div class="post-body">
                     <p>${escapeHtml(post.content)}</p>
                 </div>
                 
-                <!-- Media Elements (Photo/Voice) -->
                 ${mediaHtml}
                 
-                <!-- Footer & Reactions -->
                 <div class="post-footer">
                     <div class="reaction-bar">
                         <button class="reaction-btn ${hasHeart}" onclick="reactToPost('${post.id}', 'love')">
@@ -419,12 +514,10 @@ function renderFeed(filter = 'all') {
                     </div>
                 </div>
                 
-                <!-- Comments list -->
                 ${commentsHtml}
                 
-                <!-- Comment input box -->
                 <div class="comment-input-area hidden" id="comment-box-${post.id}" style="margin-top: 8px; display: flex; gap: 8px;">
-                    <input type="text" id="comment-input-${post.id}" class="custom-select" style="flex-grow: 1; border-radius: 20px; font-size:12px; padding: 6px 14px;" placeholder="寫下溫慢的回應..." onkeydown="handleCommentSubmit(event, '${post.id}')">
+                    <input type="text" id="comment-input-${post.id}" class="custom-select" style="flex-grow: 1; border-radius: 20px; font-size:12px; padding: 6px 14px;" placeholder="寫下溫暖的回應..." onkeydown="handleCommentSubmit(event, '${post.id}')">
                     <button class="primary-btn" style="border-radius: 20px; padding: 6px 12px; font-size: 11px;" onclick="submitComment('${post.id}')">傳送</button>
                 </div>
             </div>
@@ -434,7 +527,7 @@ function renderFeed(filter = 'all') {
     });
 }
 
-// --- 6. EVENT LISTENERS & TRIGGERS ---
+// --- 6. EVENT LISTENERS ---
 
 let photoAttachedBase64 = null;
 let voiceAttachedBlob = null;
@@ -447,13 +540,15 @@ function setupEventListeners() {
             const btnEl = e.currentTarget;
             const mood = btnEl.dataset.mood;
             
-            // Set locally
             state.currentUser.mood = mood;
             localStorage.setItem('heartspace_user_profile', JSON.stringify(state.currentUser));
             
-            // Sync to Firebase
-            db.ref(`groups/${state.groupCode}/users/${state.currentUser.name}/mood`).set(mood);
-            
+            if (state.isFirebaseConnected && db) {
+                db.ref(`groups/${state.groupCode}/users/${state.currentUser.name}/mood`).set(mood);
+            } else {
+                updateProfileUI();
+                renderFriendsList();
+            }
             updateProfileUI();
         });
     });
@@ -471,15 +566,12 @@ function setupEventListeners() {
     const attachPhotoBtn = document.getElementById('attach-photo-btn');
     const photoInput = document.getElementById('photo-input');
     
-    attachPhotoBtn.addEventListener('click', () => {
-        photoInput.click();
-    });
+    attachPhotoBtn.addEventListener('click', () => photoInput.click());
     
     photoInput.addEventListener('change', (e) => {
         const file = e.target.files[0];
         if (!file) return;
         
-        // Canvas compression
         const reader = new FileReader();
         reader.onload = function(event) {
             const img = new Image();
@@ -506,9 +598,8 @@ function setupEventListeners() {
                 const ctx = canvas.getContext('2d');
                 ctx.drawImage(img, 0, 0, width, height);
                 
-                photoAttachedBase64 = canvas.toDataURL('image/jpeg', 0.5); // high compression for database efficiency
+                photoAttachedBase64 = canvas.toDataURL('image/jpeg', 0.5);
                 
-                // Update preview
                 document.getElementById('photo-preview').src = photoAttachedBase64;
                 document.getElementById('photo-preview-container').classList.remove('hidden');
             };
@@ -538,7 +629,7 @@ function setupEventListeners() {
     // Submit Post
     document.getElementById('submit-post-btn').addEventListener('click', submitPost);
     
-    // Copy Invite Link Button
+    // Copy Invite Link
     document.getElementById('copy-invite-btn').addEventListener('click', copyInviteLink);
     
     // Lightbox triggers
@@ -546,16 +637,14 @@ function setupEventListeners() {
         document.getElementById('lightbox-modal').classList.add('hidden');
     });
     
-    // Shortcut contact buttons
+    // Shortcut contact buttons (LINE/IG redirects)
     document.getElementById('shortcut-line-btn').addEventListener('click', (e) => {
-        // If there's a group profile, check if we want to change url
         const lineContacts = Object.keys(state.friends)
             .map(k => state.friends[k])
             .filter(f => f.lineId);
         if (lineContacts.length > 0) {
             e.preventDefault();
-            const firstFriend = lineContacts[0];
-            window.open(`https://line.me/ti/p/~${firstFriend.lineId}`, '_blank');
+            window.open(`https://line.me/ti/p/~${lineContacts[0].lineId}`, '_blank');
         }
     });
 
@@ -565,13 +654,12 @@ function setupEventListeners() {
             .filter(f => f.igUsername);
         if (igContacts.length > 0) {
             e.preventDefault();
-            const firstFriend = igContacts[0];
-            window.open(`https://instagram.com/_u/${firstFriend.igUsername}/`, '_blank');
+            window.open(`https://instagram.com/_u/${igContacts[0].igUsername}/`, '_blank');
         }
     });
 }
 
-// --- 7. POST SUBMISSION (TO FIREBASE) ---
+// --- 7. POST SUBMISSION ---
 
 function submitPost() {
     const postInput = document.getElementById('post-input');
@@ -602,35 +690,52 @@ function submitPost() {
         content: content || (type === 'photo' ? '分享了一張拍立得照片 ✨' : '留了一段語音悄悄話 🎧'),
         mediaData: mediaData,
         timestamp: timeString,
-        createdAt: firebase.database.ServerValue.TIMESTAMP,
+        createdAt: Date.now(),
         mood: state.currentUser.mood,
         reactions: { love: {}, hug: {}, support: {}, coffee: {} },
         comments: {}
     };
     
-    // Save to Firebase (automatically pushes and syncs across friends)
-    db.ref(`groups/${state.groupCode}/posts`).push(newPost)
-        .then(() => {
-            // Reset fields
-            postInput.value = '';
-            photoAttachedBase64 = null;
-            voiceAttachedBase64 = null;
-            voiceAttachedBlob = null;
-            
-            document.getElementById('photo-preview-container').classList.add('hidden');
-            document.getElementById('voice-preview-container').classList.add('hidden');
-            document.getElementById('photo-input').value = '';
-            
-            // Keep radar status updated
-            db.ref(`groups/${state.groupCode}/users/${state.currentUser.name}`).update({
-                status: content.substring(0, 15) + (content.length > 15 ? '...' : '') || '剛發佈了點滴',
-                lastActive: Date.now()
+    // Helper to clean UI input fields
+    const resetInputs = () => {
+        postInput.value = '';
+        photoAttachedBase64 = null;
+        voiceAttachedBase64 = null;
+        voiceAttachedBlob = null;
+        
+        document.getElementById('photo-preview-container').classList.add('hidden');
+        document.getElementById('voice-preview-container').classList.add('hidden');
+        document.getElementById('photo-input').value = '';
+    };
+
+    // If Firebase is active and connected, push to cloud
+    if (state.isFirebaseConnected && db) {
+        db.ref(`groups/${state.groupCode}/posts`).push(newPost)
+            .then(() => {
+                resetInputs();
+                db.ref(`groups/${state.groupCode}/users/${state.currentUser.name}`).update({
+                    status: content.substring(0, 15) + (content.length > 15 ? '...' : '') || '剛發佈了點滴',
+                    lastActive: Date.now()
+                });
+            })
+            .catch(err => {
+                console.error("Firebase error posting:", err);
+                // Failover to local cache on error
+                savePostLocally(newPost);
+                resetInputs();
             });
-        })
-        .catch(err => {
-            console.error("Firebase error posting:", err);
-            alert("發佈失敗，請檢查您的網路連線。");
-        });
+    } else {
+        // Run locally
+        savePostLocally(newPost);
+        resetInputs();
+    }
+}
+
+function savePostLocally(post) {
+    post.id = 'post_local_' + Date.now();
+    state.posts.unshift(post);
+    saveLocalCache();
+    renderFeed(document.querySelector('.filter-btn.active').dataset.filter);
 }
 
 // --- 8. COPY INVITE LINK ---
@@ -715,9 +820,7 @@ function startRecording() {
     navigator.mediaDevices.getUserMedia({ audio: true })
         .then(stream => {
             mediaRecorder = new MediaRecorder(stream);
-            mediaRecorder.ondataavailable = event => {
-                audioChunks.push(event.data);
-            };
+            mediaRecorder.ondataavailable = event => audioChunks.push(event.data);
             
             mediaRecorder.onstop = () => {
                 const audioBlob = new Blob(audioChunks, { type: 'audio/mp3' });
@@ -729,10 +832,8 @@ function startRecording() {
                     document.getElementById('save-recording').classList.remove('hidden');
                 };
                 reader.readAsDataURL(audioBlob);
-                
                 stream.getTracks().forEach(track => track.stop());
             };
-            
             mediaRecorder.start();
         })
         .catch(err => {
@@ -765,13 +866,12 @@ function stopRecording(keepData) {
             const voicePreview = document.getElementById('voice-preview-container');
             voicePreview.querySelector('.voice-duration').textContent = document.getElementById('record-timer').textContent;
             voicePreview.classList.remove('hidden');
-            
             closeVoiceRecorderModal();
         }
     };
 }
 
-// --- 10. VOICE PLAYBACK CONTROL (BROWSER AUDIO / WEB SYNTH) ---
+// --- 10. VOICE PLAYBACK CONTROL ---
 
 let activeAudio = null;
 let activeAudioId = null;
@@ -885,21 +985,34 @@ function triggerSynthOscillator(audioCtx, frequency, duration) {
     osc.stop(audioCtx.currentTime + duration);
 }
 
-// --- 11. REACTIONS & COMMENTS (SYNCED TO FIREBASE) ---
+// --- 11. REACTIONS & COMMENTS (HYBRID SYNC) ---
 
 function reactToPost(postId, reactionType) {
     const post = state.posts.find(p => p.id === postId);
     if (!post) return;
     
-    const userReactPath = `groups/${state.groupCode}/posts/${postId}/reactions/${reactionType}/${state.currentUser.name}`;
-    
-    // Toggle reaction directly in Firebase
-    const hasReacted = post.reactions && post.reactions[reactionType] && post.reactions[reactionType][state.currentUser.name];
-    
-    if (hasReacted) {
-        db.ref(userReactPath).remove();
+    if (state.isFirebaseConnected && db) {
+        const userReactPath = `groups/${state.groupCode}/posts/${postId}/reactions/${reactionType}/${state.currentUser.name}`;
+        const hasReacted = post.reactions && post.reactions[reactionType] && post.reactions[reactionType][state.currentUser.name];
+        
+        if (hasReacted) {
+            db.ref(userReactPath).remove();
+        } else {
+            db.ref(userReactPath).set(true);
+        }
     } else {
-        db.ref(userReactPath).set(true);
+        // Toggle locally
+        if (!post.reactions) post.reactions = {};
+        if (!post.reactions[reactionType]) post.reactions[reactionType] = {};
+        
+        const hasReacted = post.reactions[reactionType][state.currentUser.name];
+        if (hasReacted) {
+            delete post.reactions[reactionType][state.currentUser.name];
+        } else {
+            post.reactions[reactionType][state.currentUser.name] = true;
+        }
+        saveLocalCache();
+        renderFeed(document.querySelector('.filter-btn.active').dataset.filter);
     }
 }
 
@@ -922,14 +1035,29 @@ function submitComment(postId) {
     const text = inputEl.value.trim();
     if (!text) return;
     
-    const commentRef = db.ref(`groups/${state.groupCode}/posts/${postId}/comments`).push();
-    commentRef.set({
+    const post = state.posts.find(p => p.id === postId);
+    if (!post) return;
+    
+    const comment = {
         authorName: state.currentUser.name,
         text: text,
         timestamp: '剛剛'
-    }).then(() => {
+    };
+    
+    if (state.isFirebaseConnected && db) {
+        const commentRef = db.ref(`groups/${state.groupCode}/posts/${postId}/comments`).push();
+        commentRef.set(comment).then(() => {
+            inputEl.value = '';
+        });
+    } else {
+        // Run locally
+        if (!post.comments) post.comments = {};
+        const cId = 'comment_local_' + Date.now();
+        post.comments[cId] = comment;
+        saveLocalCache();
         inputEl.value = '';
-    });
+        renderFeed(document.querySelector('.filter-btn.active').dataset.filter);
+    }
 }
 
 // --- 12. UTILS ---
