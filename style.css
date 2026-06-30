@@ -1479,3 +1479,19 @@ input[type="text"].custom-select:focus {
     margin-top: 4px;
 }
 
+.remove-friend-btn {
+    font-size: 13px;
+    color: rgba(239, 68, 68, 0.5);
+    cursor: pointer;
+    transition: var(--transition-smooth);
+    margin-left: 10px;
+    align-self: center;
+}
+
+.remove-friend-btn:hover {
+    color: rgba(239, 68, 68, 1);
+    transform: scale(1.2);
+    filter: drop-shadow(0 0 4px rgba(239, 68, 68, 0.4));
+}
+
+

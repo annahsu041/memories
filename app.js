@@ -195,6 +195,8 @@ function connectToFirebase() {
             
             // Sync user profile
             syncUserProfileToCloud();
+            // Watch for kick
+            watchKickStatus();
             // Start listening to live feed
             listenToCloudData();
         } else {
@@ -202,6 +204,22 @@ function connectToFirebase() {
             // Don't trigger offline UI immediately, wait for watchdog if initial
         }
     });
+}
+
+function watchKickStatus() {
+    if (state.isFirebaseConnected && db && state.currentUser) {
+        db.ref(`groups/${state.groupCode}/users/${state.currentUser.name}`).on('value', (snapshot) => {
+            if (state.isFirebaseConnected && !snapshot.exists()) {
+                handleKicked();
+            }
+        });
+    }
+}
+
+function handleKicked() {
+    alert("您已被房主或成員移出該群組空間！網頁將重新導向回個人設定頁面。");
+    localStorage.removeItem('heartspace_user_profile');
+    window.location.href = window.location.origin + window.location.pathname;
 }
 
 function updateOfflineUI() {
@@ -373,9 +391,10 @@ function renderFriendsList() {
                         <span class="friend-status" title="${activeStatusText}">${activeStatusText}</span>
                     </div>
                 </div>
-                <div class="friend-social-links">
+                <div class="friend-social-links" style="display: flex; align-items: center; gap: 8px;">
                     <a href="${lineHref}" target="_blank" class="friend-social-icon ${lineClass}" title="在 LINE 傳送悄悄話"><i class="fa-brands fa-line"></i></a>
                     <a href="${igHref}" target="_blank" class="friend-social-icon ${igClass}" title="查看 Instagram"><i class="fa-brands fa-instagram"></i></a>
+                    <i class="fa-solid fa-trash-can remove-friend-btn" onclick="removeFriend('${friendName}')" title="將該成員移出空間"></i>
                 </div>
             </div>
         `;
@@ -760,6 +779,29 @@ function copyInviteLink() {
             alert(`複製失敗，請手動複製此邀請連結：\n${inviteUrl}`);
         });
 }
+
+// --- 8.5 MEMBER REMOVAL ---
+
+window.removeFriend = function(friendName) {
+    if (confirm(`確定要將成員「${friendName}」移出這個空間嗎？`)) {
+        if (state.isFirebaseConnected && db) {
+            db.ref(`groups/${state.groupCode}/users/${friendName}`).remove()
+                .then(() => {
+                    alert(`已將成員「${friendName}」移出此空間。`);
+                })
+                .catch(err => {
+                    console.error("Firebase removal failed:", err);
+                    alert("移除成員失敗，請稍候再試。");
+                });
+        } else {
+            // Local mode fallback
+            delete state.friends[friendName];
+            saveLocalCache();
+            renderFriendsList();
+            alert(`已在本地將「${friendName}」移除。`);
+        }
+    }
+};
 
 // --- 9. VOICE RECORDING (MEDIARECORDER + WEB AUDIO SYNTH) ---
 
