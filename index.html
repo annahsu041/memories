@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HeartSpace 溫暖角落 - 摯友的共享空間</title>
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Font Awesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- Background Gradient Blobs -->
+    <div class="glow-bg">
+        <div class="blob blob-1"></div>
+        <div class="blob blob-2"></div>
+        <div class="blob blob-3"></div>
+    </div>
+
+    <!-- Application Wrapper -->
+    <div class="app-container">
+        
+        <!-- Header -->
+        <header class="app-header">
+            <div class="logo">
+                <i class="fa-solid fa-heart-pulse logo-icon"></i>
+                <div class="logo-text">
+                    <h1>HeartSpace</h1>
+                    <span>溫暖角落</span>
+                </div>
+            </div>
+            
+            <div class="header-right">
+                <!-- User Simulator Switcher -->
+                <div class="user-simulator">
+                    <label for="user-select"><i class="fa-solid fa-user-gear"></i> 切換視角：</label>
+                    <select id="user-select" class="custom-select">
+                        <option value="user_me">我 (User)</option>
+                        <option value="friend_yuki">Yuki</option>
+                        <option value="friend_alan">Alan</option>
+                        <option value="friend_doris">Doris</option>
+                    </select>
+                </div>
+                
+                <div class="time-widget" id="time-widget">
+                    <span id="current-time">12:00</span>
+                    <span id="greeting-text">你好</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content Layout -->
+        <main class="app-main">
+            
+            <!-- Left Panel: Mood & Share -->
+            <section class="left-panel">
+                <div class="glass-card profile-card">
+                    <div class="avatar-aura-container">
+                        <div class="profile-avatar" id="my-avatar">我</div>
+                        <div class="mood-glow" id="my-mood-glow"></div>
+                    </div>
+                    <h2 id="my-profile-name">我的狀態</h2>
+                    <p class="profile-role">當前情緒與生活氣氛</p>
+                    
+                    <!-- Mood Selection Wheel/Grid -->
+                    <div class="mood-selector-container">
+                        <h3>今天的心情是...</h3>
+                        <div class="mood-grid">
+                            <button class="mood-btn active" data-mood="happy" data-color="#ffd166" data-emoji="✨">
+                                <span class="mood-emoji">✨</span>
+                                <span class="mood-label">活力</span>
+                            </button>
+                            <button class="mood-btn" data-mood="relaxed" data-color="#83c5be" data-emoji="☕">
+                                <span class="mood-emoji">☕</span>
+                                <span class="mood-label">放鬆</span>
+                            </button>
+                            <button class="mood-btn" data-mood="tired" data-color="#a78bfa" data-emoji="😴">
+                                <span class="mood-emoji">😴</span>
+                                <span class="mood-label">疲憊</span>
+                            </button>
+                            <button class="mood-btn" data-mood="busy" data-color="#f28482" data-emoji="🔥">
+                                <span class="mood-emoji">🔥</span>
+                                <span class="mood-label">忙碌</span>
+                            </button>
+                            <button class="mood-btn" data-mood="emo" data-color="#90e0ef" data-emoji="🌧️">
+                                <span class="mood-emoji">🌧️</span>
+                                <span class="mood-label">心碎</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Create Post Card -->
+                <div class="glass-card create-post-card">
+                    <h3>分享這一刻...</h3>
+                    <div class="input-wrapper">
+                        <textarea id="post-input" placeholder="有什麼悄悄話想對大家說嗎？（例如：下班後在咖啡廳看雨中...）"></textarea>
+                    </div>
+                    
+                    <!-- Preview Areas -->
+                    <div id="photo-preview-container" class="preview-box hidden">
+                        <img id="photo-preview" src="" alt="上傳相片預覽">
+                        <button id="remove-photo" class="remove-preview-btn"><i class="fa-solid fa-times"></i></button>
+                    </div>
+                    
+                    <div id="voice-preview-container" class="preview-box voice-preview hidden">
+                        <div class="mini-player">
+                            <i class="fa-solid fa-microphone-lines mini-mic-icon"></i>
+                            <span class="voice-duration">0:00</span>
+                            <span class="voice-text">已錄製語音</span>
+                        </div>
+                        <button id="remove-voice" class="remove-preview-btn"><i class="fa-solid fa-times"></i></button>
+                    </div>
+
+                    <!-- Post Controls -->
+                    <div class="post-actions">
+                        <div class="media-attach">
+                            <!-- Photo Selector -->
+                            <button class="attach-btn" id="attach-photo-btn" title="上傳照片">
+                                <i class="fa-regular fa-image"></i>
+                                <input type="file" id="photo-input" accept="image/*" class="hidden-file-input">
+                            </button>
+                            <!-- Audio Selector -->
+                            <button class="attach-btn" id="attach-voice-btn" title="錄製語音">
+                                <i class="fa-solid fa-microphone"></i>
+                            </button>
+                        </div>
+                        <button id="submit-post-btn" class="primary-btn">
+                            <span>傳送</span>
+                            <i class="fa-solid fa-paper-plane"></i>
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Middle Panel: Status & Moments Feed -->
+            <section class="middle-panel">
+                <div class="feed-header">
+                    <h2>摯友動態牆</h2>
+                    <div class="feed-filters">
+                        <button class="filter-btn active" data-filter="all">全部</button>
+                        <button class="filter-btn" data-filter="status">文字</button>
+                        <button class="filter-btn" data-filter="photo">拍立得</button>
+                        <button class="filter-btn" data-filter="voice">語音</button>
+                    </div>
+                </div>
+
+                <div class="posts-feed" id="posts-feed">
+                    <!-- Dynamic post cards inserted here -->
+                </div>
+            </section>
+
+            <!-- Right Panel: Friends & Social -->
+            <section class="right-panel">
+                <div class="glass-card friends-radar">
+                    <div class="radar-header">
+                        <h2>摯友雷達</h2>
+                        <span class="active-badge"><span class="dot"></span> 4 人在線上</span>
+                    </div>
+                    
+                    <div class="friends-list" id="friends-list">
+                        <!-- Dynamic friends status list inserted here -->
+                    </div>
+                </div>
+
+                <div class="glass-card connect-box">
+                    <h3>快速聯繫通道</h3>
+                    <p class="connect-desc">想念對方了嗎？一鍵發起深度對話或通話吧！</p>
+                    <div class="connect-channels">
+                        <a href="https://line.me/tw/" target="_blank" class="channel-btn line">
+                            <i class="fa-brands fa-line"></i>
+                            <span>LINE</span>
+                        </a>
+                        <a href="https://instagram.com" target="_blank" class="channel-btn ig">
+                            <i class="fa-brands fa-instagram"></i>
+                            <span>Instagram</span>
+                        </a>
+                        <a href="https://www.messenger.com/" target="_blank" class="channel-btn messenger">
+                            <i class="fa-brands fa-facebook-messenger"></i>
+                            <span>Messenger</span>
+                        </a>
+                        <a href="https://discord.com/" target="_blank" class="channel-btn discord">
+                            <i class="fa-brands fa-discord"></i>
+                            <span>Discord</span>
+                        </a>
+                    </div>
+                </div>
+            </section>
+
+        </main>
+    </div>
+
+    <!-- Voice Recording Modal -->
+    <div class="modal-overlay hidden" id="voice-modal">
+        <div class="glass-card modal-content">
+            <button class="close-modal" id="close-voice-modal"><i class="fa-solid fa-xmark"></i></button>
+            <h2>錄製語音悄悄話</h2>
+            <p>跟朋友分享你現在的環境音或想對他們說的話吧 (限時10秒)</p>
+            
+            <div class="recording-visualizer">
+                <div class="pulse-ring bg-pulse"></div>
+                <div class="pulse-ring bg-pulse-2"></div>
+                <div class="recording-icon-btn" id="record-action-btn">
+                    <i class="fa-solid fa-microphone" id="mic-icon"></i>
+                </div>
+                <div class="sound-waves" id="sound-waves">
+                    <span></span><span></span><span></span><span></span><span></span>
+                </div>
+            </div>
+            
+            <div class="timer-display" id="record-timer">00:00</div>
+            <div class="recording-status" id="recording-status">點擊按鈕開始錄音</div>
+            
+            <div class="modal-actions">
+                <button class="secondary-btn" id="cancel-recording">取消</button>
+                <button class="primary-btn hidden" id="save-recording">保存錄音</button>
+            </div>
+
+            <!-- Fallback Mock option in case of permission blocking -->
+            <div class="mock-recording-toggle">
+                <label class="switch">
+                    <input type="checkbox" id="use-mock-audio">
+                    <span class="slider round"></span>
+                </label>
+                <span class="mock-text">若麥克風權限受阻，使用預載模擬語音</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Polaroid Photo Detail Lightbox -->
+    <div class="modal-overlay hidden lightbox-overlay" id="lightbox-modal">
+        <div class="lightbox-content">
+            <button class="close-lightbox" id="close-lightbox"><i class="fa-solid fa-xmark"></i></button>
+            <img src="" id="lightbox-img" alt="放大照片">
+            <div class="lightbox-caption" id="lightbox-caption"></div>
+        </div>
+    </div>
+
+    <!-- Custom JS -->
+    <script src="app.js"></script>
+</body>
+</html>
