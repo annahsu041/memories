@@ -1,42 +1,25 @@
 /* ==========================================================================
-   HEARTSPACE CORE APPLICATION LOGIC
+   HEARTSPACE CORE APPLICATION LOGIC (FIREBASE SYNC & REALTIME EDITION)
    ========================================================================== */
 
-// --- 1. CONFIGURATION & STATE MANAGEMENT ---
+// --- 1. FIREBASE CONFIGURATION & INITIALIZATION ---
 
-const USER_PROFILES = {
-    user_me: {
-        id: 'user_me',
-        name: '我 (Hanna)',
-        avatar: 'H',
-        avatarColor: '#f59e0b', // Orange glow
-        mood: 'happy',
-        social: { line: '#', ig: '#' }
-    },
-    friend_yuki: {
-        id: 'friend_yuki',
-        name: 'Yuki',
-        avatar: 'Y',
-        avatarColor: '#10b981', // Emerald glow
-        mood: 'relaxed',
-        social: { line: 'https://line.me/tw/', ig: 'https://instagram.com' }
-    },
-    friend_alan: {
-        id: 'friend_alan',
-        name: 'Alan',
-        avatar: 'A',
-        avatarColor: '#8b5cf6', // Purple glow
-        mood: 'tired',
-        social: { line: 'https://line.me/tw/', ig: 'https://instagram.com' }
-    },
-    friend_doris: {
-        id: 'friend_doris',
-        name: 'Doris',
-        avatar: 'D',
-        avatarColor: '#ec4899', // Pink glow
-        mood: 'busy',
-        social: { line: 'https://line.me/tw/', ig: 'https://instagram.com' }
-    }
+// Using a public sandbox Realtime Database hosted for the HeartSpace project
+const firebaseConfig = {
+    databaseURL: "https://gemini-antigravity-default-rtdb.firebaseio.com"
+};
+
+// Initialize Firebase
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+
+// --- 2. GLOBAL STATE ---
+
+let state = {
+    currentUser: null,       // Loaded from LocalStorage: { name, groupCode, lineId, igUsername, mood }
+    groupCode: null,         // Active friendship space identifier
+    posts: [],               // Synced from Firebase groups/groupCode/posts
+    friends: {}              // Synced from Firebase groups/groupCode/users
 };
 
 const MOODS = {
@@ -47,106 +30,135 @@ const MOODS = {
     emo: { label: '心碎沮喪', emoji: '🌧️', color: '#90e0ef', status: '需要一點溫暖，今天有點小 emo。' }
 };
 
-// Global App State
-let state = {
-    currentUser: 'user_me',
-    posts: [],
-    friends: {
-        friend_yuki: { mood: 'relaxed', status: '在咖啡廳躲雨 ☕', lastActive: '10 分鐘前' },
-        friend_alan: { mood: 'tired', status: '加班除錯中... 💻', lastActive: '1 小時前' },
-        friend_doris: { mood: 'busy', status: '瘋狂會議中 📅', lastActive: '30 分鐘前' }
-    }
-};
-
-// Prepopulated Default Posts if LocalStorage is empty
-const DEFAULT_POSTS = [
-    {
-        id: 'post_1',
-        author: 'friend_yuki',
-        type: 'photo',
-        content: '忙裡偷閒！這家巷弄裡的咖啡館特別安靜，肉桂捲超級美味。點了一杯卡布奇諾，看完了半本書。送一隻雲端肉桂捲給你們 🥐☕',
-        mediaData: 'https://images.unsplash.com/photo-1509042239860-f550ce710b93?w=600&auto=format&fit=crop&q=80',
-        timestamp: '今天 14:32',
-        mood: 'relaxed',
-        reactions: { love: ['friend_alan', 'user_me'], hug: ['friend_doris'] },
-        comments: [
-            { author: 'friend_alan', text: '天哪！肉桂捲看起來太犯規了，求店名！', timestamp: '14:40' },
-            { author: 'user_me', text: '下週末約這間！我也要去！', timestamp: '15:12' }
-        ]
-    },
-    {
-        id: 'post_2',
-        author: 'friend_alan',
-        type: 'voice',
-        content: '給大家聽聽我這邊窗外的雨聲，伴隨著鍵盤聲，還蠻舒壓的。希望大家今天一切順利，加油啦！',
-        mediaData: 'MOCK_AUDIO_ALAN', // Simulated dynamic synth sound
-        timestamp: '今天 12:15',
-        mood: 'tired',
-        reactions: { support: ['user_me', 'friend_yuki'], coffee: ['friend_doris'] },
-        comments: [
-            { author: 'friend_doris', text: '雨聲聽著好療癒，寫 code 加油！', timestamp: '12:30' }
-        ]
-    },
-    {
-        id: 'post_3',
-        author: 'friend_doris',
-        type: 'status',
-        content: '剛剛完成了一場長達三小時的專案報告，簡直像打完一場仗 😩 現在只想戴上耳機放空，大家今天過得如何？快留言跟我說話，安慰我受傷的心靈嗚嗚。',
-        mediaData: null,
-        timestamp: '今天 10:05',
-        mood: 'busy',
-        reactions: { hug: ['user_me', 'friend_yuki', 'friend_alan'] },
-        comments: [
-            { author: 'friend_yuki', text: '辛苦了 Doris！抱抱！下班喝一杯！', timestamp: '10:15' }
-        ]
-    }
-];
-
-// --- 2. INITIALIZATION & STORAGE LOAD ---
+// --- 3. ONBOARDING & INITIALIZATION ---
 
 function initApp() {
-    loadFromLocalStorage();
     setupDateTime();
-    setupEventListeners();
-    updateProfileUI();
-    renderFriendsList();
-    renderFeed('all');
-    
-    // Periodically update time
     setInterval(setupDateTime, 60000);
-}
-
-function loadFromLocalStorage() {
-    const savedPosts = localStorage.getItem('heartspace_posts');
-    const savedFriends = localStorage.getItem('heartspace_friends');
-    const savedCurrentUser = localStorage.getItem('heartspace_current_user');
     
-    if (savedPosts) {
-        state.posts = JSON.parse(savedPosts);
+    // Check if user has an existing profile
+    const savedProfile = localStorage.getItem('heartspace_user_profile');
+    
+    // Check url for invite parameters
+    const urlParams = new URLSearchParams(window.location.search);
+    const inviteCode = urlParams.get('invite');
+    
+    if (savedProfile) {
+        state.currentUser = JSON.parse(savedProfile);
+        state.groupCode = state.currentUser.groupCode;
+        
+        // If invite parameters are different, prompt update or auto join
+        if (inviteCode && inviteCode !== state.groupCode) {
+            if (confirm(`偵測到新的邀請連結！要從目前的群組「${state.groupCode}」切換至「${inviteCode}」嗎？`)) {
+                state.currentUser.groupCode = inviteCode;
+                state.groupCode = inviteCode;
+                localStorage.setItem('heartspace_user_profile', JSON.stringify(state.currentUser));
+                // Clear URL parameters for cleanliness
+                window.history.replaceState({}, document.title, window.location.pathname);
+            }
+        }
+        
+        connectToFirebase();
+        setupEventListeners();
     } else {
-        state.posts = [...DEFAULT_POSTS];
-        savePostsToStorage();
+        // Open Onboarding welcome Modal
+        const onboardModal = document.getElementById('onboard-modal');
+        onboardModal.classList.remove('hidden');
+        
+        if (inviteCode) {
+            document.getElementById('onboard-invite').value = inviteCode;
+        }
+        
+        setupOnboardingListeners();
     }
+}
+
+// Setup listeners specifically for onboarding
+function setupOnboardingListeners() {
+    const startBtn = document.getElementById('start-onboard-btn');
+    startBtn.onclick = () => {
+        const nameInput = document.getElementById('onboard-name').value.trim();
+        const inviteInput = document.getElementById('onboard-invite').value.trim().toUpperCase();
+        const lineInput = document.getElementById('onboard-line').value.trim();
+        const igInput = document.getElementById('onboard-ig').value.trim();
+        
+        if (!nameInput || !inviteInput) {
+            alert('請填寫名字與邀請代碼！');
+            return;
+        }
+        
+        // Build User Profile
+        state.currentUser = {
+            name: nameInput,
+            groupCode: inviteInput,
+            lineId: lineInput,
+            igUsername: igInput,
+            mood: 'relaxed' // Default mood
+        };
+        state.groupCode = inviteInput;
+        
+        // Save to LocalStorage
+        localStorage.setItem('heartspace_user_profile', JSON.stringify(state.currentUser));
+        
+        // Hide modal
+        document.getElementById('onboard-modal').classList.add('hidden');
+        
+        // Connect and build
+        connectToFirebase();
+        setupEventListeners();
+        
+        // Clear url parameters if present
+        window.history.replaceState({}, document.title, window.location.pathname);
+    };
+}
+
+// --- 4. FIREBASE CONNECTIVITY & LISTENERS ---
+
+function connectToFirebase() {
+    document.getElementById('active-space-name').textContent = `空間: ${state.groupCode}`;
     
-    if (savedFriends) {
-        state.friends = JSON.parse(savedFriends);
-    }
+    // Register current user's profile on Firebase Database under this group
+    const userRef = db.ref(`groups/${state.groupCode}/users/${state.currentUser.name}`);
+    userRef.set({
+        name: state.currentUser.name,
+        lineId: state.currentUser.lineId || '',
+        igUsername: state.currentUser.igUsername || '',
+        mood: state.currentUser.mood,
+        lastActive: Date.now()
+    });
     
-    if (savedCurrentUser && USER_PROFILES[savedCurrentUser]) {
-        state.currentUser = savedCurrentUser;
-        document.getElementById('user-select').value = savedCurrentUser;
-    }
+    // Auto-update last active timestamp on disconnect
+    userRef.onDisconnect().update({
+        lastActive: firebase.database.ServerValue.TIMESTAMP
+    });
+    
+    // Watch Database for Posts Updates
+    db.ref(`groups/${state.groupCode}/posts`).on('value', (snapshot) => {
+        const data = snapshot.val();
+        state.posts = [];
+        if (data) {
+            // Convert object map to sorted array (newest first)
+            Object.keys(data).forEach(key => {
+                state.posts.push({
+                    id: key,
+                    ...data[key]
+                });
+            });
+            state.posts.sort((a, b) => b.createdAt - a.createdAt);
+        }
+        renderFeed(document.querySelector('.filter-btn.active').dataset.filter);
+    });
+    
+    // Watch Database for Users (Friends) updates
+    db.ref(`groups/${state.groupCode}/users`).on('value', (snapshot) => {
+        const data = snapshot.val();
+        state.friends = data || {};
+        updateProfileUI();
+        renderFriendsList();
+    });
 }
 
-function savePostsToStorage() {
-    localStorage.setItem('heartspace_posts', JSON.stringify(state.posts));
-}
-
-function saveFriendsToStorage() {
-    localStorage.setItem('heartspace_friends', JSON.stringify(state.friends));
-}
-
-// --- 3. DYNAMIC UI RENDERING FUNCTIONS ---
+// --- 5. UI UPDATING FUNCTIONS ---
 
 function setupDateTime() {
     const timeSpan = document.getElementById('current-time');
@@ -174,23 +186,27 @@ function setupDateTime() {
 }
 
 function updateProfileUI() {
-    const currentUser = USER_PROFILES[state.currentUser];
+    if (!state.currentUser) return;
+    
     const avatar = document.getElementById('my-avatar');
     const nameEl = document.getElementById('my-profile-name');
     const glow = document.getElementById('my-mood-glow');
+    const subEl = document.getElementById('my-profile-sub');
     
-    avatar.textContent = currentUser.avatar;
-    avatar.style.background = `linear-gradient(135deg, ${currentUser.avatarColor}, #3f3f46)`;
-    nameEl.textContent = currentUser.name;
+    avatar.textContent = state.currentUser.name.charAt(0).toUpperCase();
+    avatar.style.background = `linear-gradient(135deg, #a78bfa, #3f3f46)`;
+    nameEl.textContent = state.currentUser.name;
+    subEl.textContent = `@${state.groupCode} 空間房主`;
     
-    // Get mood color
-    const moodColor = MOODS[currentUser.mood].color;
+    // Get current mood from active state
+    const currentMood = state.currentUser.mood;
+    const moodColor = MOODS[currentMood]?.color || '#83c5be';
     glow.style.backgroundColor = moodColor;
     glow.style.boxShadow = `0 0 20px ${moodColor}`;
     
     // Update active state in mood selection buttons
     document.querySelectorAll('.mood-btn').forEach(btn => {
-        if (btn.dataset.mood === currentUser.mood) {
+        if (btn.dataset.mood === currentMood) {
             btn.classList.add('active');
         } else {
             btn.classList.remove('active');
@@ -202,32 +218,61 @@ function renderFriendsList() {
     const listEl = document.getElementById('friends-list');
     listEl.innerHTML = '';
     
-    Object.keys(USER_PROFILES).forEach(profileKey => {
-        if (profileKey === state.currentUser) return; // Hide self in list
+    const friendKeys = Object.keys(state.friends).filter(name => name !== state.currentUser.name);
+    
+    document.getElementById('friends-count').textContent = friendKeys.length + 1;
+    
+    if (friendKeys.length === 0) {
+        listEl.innerHTML = `
+            <div style="text-align: center; padding: 20px; font-size: 11.5px; color: var(--color-text-secondary);">
+                目前沒有好友在空間中。點擊下方按鈕，複製邀請連結傳給摯友吧！
+            </div>
+        `;
+        return;
+    }
+    
+    friendKeys.forEach(friendName => {
+        const friend = state.friends[friendName];
+        const moodObj = MOODS[friend.mood] || { label: '平靜', emoji: '☕', color: '#83c5be', status: '放鬆休息中' };
         
-        const profile = USER_PROFILES[profileKey];
-        // Get dynamic status/mood from state
-        const friendStatus = (profileKey === 'user_me') ? 'Active' : (state.friends[profileKey]?.status || MOODS[profile.mood].status);
-        const friendMood = (profileKey === 'user_me') ? profile.mood : (state.friends[profileKey]?.mood || profile.mood);
-        const lastActive = (profileKey === 'user_me') ? 'Now' : (state.friends[profileKey]?.lastActive || '剛剛');
+        // Calculate status time
+        let activeStatusText = '離線';
+        const isOnline = (Date.now() - friend.lastActive) < 120000; // Active within 2 minutes
         
-        const moodObj = MOODS[friendMood];
+        if (isOnline) {
+            activeStatusText = moodObj.status || '線上活躍中';
+        } else {
+            const diffMin = Math.floor((Date.now() - friend.lastActive) / 60000);
+            if (diffMin < 60) {
+                activeStatusText = `${diffMin} 分鐘前在線上`;
+            } else {
+                const diffHr = Math.floor(diffMin / 60);
+                activeStatusText = diffHr < 24 ? `${diffHr} 小時前在線上` : `${Math.floor(diffHr/24)} 天前在線上`;
+            }
+        }
+        
+        // LINE/IG URL schemes
+        const lineHref = friend.lineId ? `https://line.me/ti/p/~${friend.lineId}` : '#';
+        const igHref = friend.igUsername ? `https://instagram.com/_u/${friend.igUsername}/` : '#';
+        
+        const lineClass = friend.lineId ? '' : 'hidden';
+        const igClass = friend.igUsername ? '' : 'hidden';
         
         const itemHtml = `
             <div class="friend-item">
                 <div class="friend-profile-info">
                     <div class="friend-avatar-container">
-                        <div class="friend-avatar" style="background: linear-gradient(135deg, ${profile.avatarColor}, #27272a)">${profile.avatar}</div>
+                        <div class="friend-avatar" style="background: linear-gradient(135deg, #a78bfa, #27272a)">${friendName.charAt(0).toUpperCase()}</div>
                         <div class="mood-glow" style="background-color: ${moodObj.color}; box-shadow: 0 0 10px ${moodObj.color};"></div>
                     </div>
                     <div class="friend-details">
-                        <span class="friend-name">${profile.name} <span style="font-size:11px" title="${moodObj.label}">${moodObj.emoji}</span></span>
-                        <span class="friend-status" title="${friendStatus}">${friendStatus}</span>
+                        <span class="friend-name">${friendName} <span style="font-size:11px" title="${moodObj.label}">${moodObj.emoji}</span></span>
+                        <span class="friend-status" title="${activeStatusText}">${activeStatusText}</span>
                     </div>
                 </div>
                 <div class="friend-social-links">
-                    <a href="${profile.social.line}" target="_blank" class="friend-social-icon" title="在 LINE 傳送悄悄話"><i class="fa-brands fa-line"></i></a>
-                    <a href="${profile.social.ig}" target="_blank" class="friend-social-icon" title="查看 Instagram"><i class="fa-brands fa-instagram"></i></a>
+                    <a href="${lineHref}" target="_blank" class="friend-social-icon ${lineClass}" title="在 LINE 傳送悄悄話"><i class="fa-brands fa-line"></i></a>
+                    <a href="${igHref}" target="_blank" class="friend-social-icon ${igClass}" title="查看 Instagram"><i class="fa-brands fa-instagram"></i></a>
                 </div>
             </div>
         `;
@@ -248,14 +293,13 @@ function renderFeed(filter = 'all') {
         feedEl.innerHTML = `
             <div class="glass-card post-card" style="text-align: center; padding: 40px; color: var(--color-text-secondary);">
                 <i class="fa-solid fa-heart-crack" style="font-size: 28px; margin-bottom: 12px; color: var(--color-mood-tired)"></i>
-                <p>這裡目前空空如也，發佈第一條點滴吧！</p>
+                <p>該類型目前沒有貼文，分享一則溫暖的近況吧！</p>
             </div>
         `;
         return;
     }
     
     filteredPosts.forEach(post => {
-        const author = USER_PROFILES[post.author] || { name: '未知摯友', avatar: '?', avatarColor: '#52525b', mood: 'happy' };
         const moodObj = MOODS[post.mood] || { label: '平靜', emoji: '☕', color: '#83c5be' };
         
         // Build post content media element
@@ -264,7 +308,7 @@ function renderFeed(filter = 'all') {
             mediaHtml = `
                 <div class="polaroid-container" onclick="openLightbox('${post.mediaData}', '${escapeHtml(post.content)}')">
                     <img src="${post.mediaData}" class="polaroid-img" alt="生活瞬間">
-                    <div class="polaroid-caption">${author.name} · ${moodObj.emoji} ${moodObj.label}</div>
+                    <div class="polaroid-caption">${post.authorName} · ${moodObj.emoji} ${moodObj.label}</div>
                 </div>
             `;
         } else if (post.type === 'voice' && post.mediaData) {
@@ -290,33 +334,33 @@ function renderFeed(filter = 'all') {
         }
         
         // Build reactions counts
-        const rHeart = (post.reactions?.love || []).length;
-        const rHug = (post.reactions?.hug || []).length;
-        const rSupport = (post.reactions?.support || []).length;
-        const rCoffee = (post.reactions?.coffee || []).length;
+        const rHeart = post.reactions && post.reactions.love ? Object.keys(post.reactions.love).length : 0;
+        const rHug = post.reactions && post.reactions.hug ? Object.keys(post.reactions.hug).length : 0;
+        const rSupport = post.reactions && post.reactions.support ? Object.keys(post.reactions.support).length : 0;
+        const rCoffee = post.reactions && post.reactions.coffee ? Object.keys(post.reactions.coffee).length : 0;
         
         // Check if current user reacted
-        const hasHeart = (post.reactions?.love || []).includes(state.currentUser) ? 'reacted' : '';
-        const hasHug = (post.reactions?.hug || []).includes(state.currentUser) ? 'reacted' : '';
-        const hasSupport = (post.reactions?.support || []).includes(state.currentUser) ? 'reacted' : '';
-        const hasCoffee = (post.reactions?.coffee || []).includes(state.currentUser) ? 'reacted' : '';
+        const hasHeart = post.reactions && post.reactions.love && post.reactions.love[state.currentUser.name] ? 'reacted' : '';
+        const hasHug = post.reactions && post.reactions.hug && post.reactions.hug[state.currentUser.name] ? 'reacted' : '';
+        const hasSupport = post.reactions && post.reactions.support && post.reactions.support[state.currentUser.name] ? 'reacted' : '';
+        const hasCoffee = post.reactions && post.reactions.coffee && post.reactions.coffee[state.currentUser.name] ? 'reacted' : '';
         
         // Build comments list
         let commentsHtml = '';
-        if (post.comments && post.comments.length > 0) {
-            commentsHtml = `
-                <div class="quick-comments-list">
-                    ${post.comments.map(c => {
-                        const commenter = USER_PROFILES[c.author]?.name || '好友';
-                        return `
+        if (post.comments) {
+            const commentsArray = Object.keys(post.comments).map(k => post.comments[k]);
+            if (commentsArray.length > 0) {
+                commentsHtml = `
+                    <div class="quick-comments-list">
+                        ${commentsArray.map(c => `
                             <div class="comment-item">
-                                <span class="comment-author">${commenter}:</span>
+                                <span class="comment-author">${c.authorName}:</span>
                                 <span>${escapeHtml(c.text)}</span>
                             </div>
-                        `;
-                    }).join('')}
-                </div>
-            `;
+                        `).join('')}
+                    </div>
+                `;
+            }
         }
         
         const cardHtml = `
@@ -325,11 +369,11 @@ function renderFeed(filter = 'all') {
                 <div class="post-header">
                     <div class="post-author-info">
                         <div class="post-author-avatar-container">
-                            <div class="post-author-avatar" style="background: linear-gradient(135deg, ${author.avatarColor}, #18181b)">${author.avatar}</div>
+                            <div class="post-author-avatar" style="background: linear-gradient(135deg, #a78bfa, #18181b)">${post.authorName.charAt(0).toUpperCase()}</div>
                             <div class="mood-glow" style="background-color: ${moodObj.color}; box-shadow: 0 0 10px ${moodObj.color};"></div>
                         </div>
                         <div class="post-author-details">
-                            <span class="post-author-name">${author.name}</span>
+                            <span class="post-author-name">${post.authorName}</span>
                             <span class="post-time">${post.timestamp}</span>
                         </div>
                     </div>
@@ -370,7 +414,7 @@ function renderFeed(filter = 'all') {
                     
                     <div class="comment-trigger">
                         <span style="font-size: 11px; color: var(--color-text-secondary); cursor: pointer;" onclick="focusCommentInput('${post.id}')">
-                            <i class="fa-regular fa-comment"></i> 回應 (${post.comments?.length || 0})
+                            <i class="fa-regular fa-comment"></i> 回應 (${post.comments ? Object.keys(post.comments).length : 0})
                         </span>
                     </div>
                 </div>
@@ -380,7 +424,7 @@ function renderFeed(filter = 'all') {
                 
                 <!-- Comment input box -->
                 <div class="comment-input-area hidden" id="comment-box-${post.id}" style="margin-top: 8px; display: flex; gap: 8px;">
-                    <input type="text" id="comment-input-${post.id}" class="custom-select" style="flex-grow: 1; border-radius: 20px; font-size:12px; padding: 6px 14px;" placeholder="寫下溫暖的回應..." onkeydown="handleCommentSubmit(event, '${post.id}')">
+                    <input type="text" id="comment-input-${post.id}" class="custom-select" style="flex-grow: 1; border-radius: 20px; font-size:12px; padding: 6px 14px;" placeholder="寫下溫慢的回應..." onkeydown="handleCommentSubmit(event, '${post.id}')">
                     <button class="primary-btn" style="border-radius: 20px; padding: 6px 12px; font-size: 11px;" onclick="submitComment('${post.id}')">傳送</button>
                 </div>
             </div>
@@ -390,42 +434,27 @@ function renderFeed(filter = 'all') {
     });
 }
 
-// --- 4. EVENT LISTENERS & USER INTERACTION ---
+// --- 6. EVENT LISTENERS & TRIGGERS ---
 
 let photoAttachedBase64 = null;
 let voiceAttachedBlob = null;
 let voiceAttachedBase64 = null;
-let voiceDurationSec = 10;
 
 function setupEventListeners() {
-    // Simulator switcher
-    document.getElementById('user-select').addEventListener('change', (e) => {
-        state.currentUser = e.target.value;
-        localStorage.setItem('heartspace_current_user', state.currentUser);
-        updateProfileUI();
-        renderFriendsList();
-        renderFeed(document.querySelector('.filter-btn.active').dataset.filter);
-    });
-    
     // Mood select buttons
     document.querySelectorAll('.mood-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
             const btnEl = e.currentTarget;
             const mood = btnEl.dataset.mood;
             
-            // Set mood in user profile state
-            USER_PROFILES[state.currentUser].mood = mood;
+            // Set locally
+            state.currentUser.mood = mood;
+            localStorage.setItem('heartspace_user_profile', JSON.stringify(state.currentUser));
             
-            // If it is a simulated friend, update their status in the radar
-            if (state.currentUser !== 'user_me') {
-                if (!state.friends[state.currentUser]) state.friends[state.currentUser] = {};
-                state.friends[state.currentUser].mood = mood;
-                state.friends[state.currentUser].status = MOODS[mood].status;
-                saveFriendsToStorage();
-            }
+            // Sync to Firebase
+            db.ref(`groups/${state.groupCode}/users/${state.currentUser.name}/mood`).set(mood);
             
             updateProfileUI();
-            renderFriendsList();
         });
     });
     
@@ -450,16 +479,15 @@ function setupEventListeners() {
         const file = e.target.files[0];
         if (!file) return;
         
-        // Perform Canvas Compression to keep LocalStorage slim
+        // Canvas compression
         const reader = new FileReader();
         reader.onload = function(event) {
             const img = new Image();
             img.onload = function() {
-                // Compress image to 500x500 square or proportionate boundaries
                 const canvas = document.createElement('canvas');
                 let width = img.width;
                 let height = img.height;
-                const max_size = 600;
+                const max_size = 500;
                 
                 if (width > height) {
                     if (width > max_size) {
@@ -478,8 +506,7 @@ function setupEventListeners() {
                 const ctx = canvas.getContext('2d');
                 ctx.drawImage(img, 0, 0, width, height);
                 
-                // JPEG compression at 0.6 quality
-                photoAttachedBase64 = canvas.toDataURL('image/jpeg', 0.6);
+                photoAttachedBase64 = canvas.toDataURL('image/jpeg', 0.5); // high compression for database efficiency
                 
                 // Update preview
                 document.getElementById('photo-preview').src = photoAttachedBase64;
@@ -498,20 +525,10 @@ function setupEventListeners() {
 
     // Recording triggers
     const attachVoiceBtn = document.getElementById('attach-voice-btn');
-    const voiceModal = document.getElementById('voice-modal');
+    attachVoiceBtn.addEventListener('click', () => openVoiceRecorderModal());
     
-    attachVoiceBtn.addEventListener('click', () => {
-        openVoiceRecorderModal();
-    });
-    
-    document.getElementById('close-voice-modal').addEventListener('click', () => {
-        closeVoiceRecorderModal();
-    });
-    
-    document.getElementById('cancel-recording').addEventListener('click', () => {
-        closeVoiceRecorderModal();
-    });
-    
+    document.getElementById('close-voice-modal').addEventListener('click', () => closeVoiceRecorderModal());
+    document.getElementById('cancel-recording').addEventListener('click', () => closeVoiceRecorderModal());
     document.getElementById('remove-voice').addEventListener('click', () => {
         voiceAttachedBlob = null;
         voiceAttachedBase64 = null;
@@ -521,21 +538,47 @@ function setupEventListeners() {
     // Submit Post
     document.getElementById('submit-post-btn').addEventListener('click', submitPost);
     
+    // Copy Invite Link Button
+    document.getElementById('copy-invite-btn').addEventListener('click', copyInviteLink);
+    
     // Lightbox triggers
     document.getElementById('close-lightbox').addEventListener('click', () => {
         document.getElementById('lightbox-modal').classList.add('hidden');
     });
+    
+    // Shortcut contact buttons
+    document.getElementById('shortcut-line-btn').addEventListener('click', (e) => {
+        // If there's a group profile, check if we want to change url
+        const lineContacts = Object.keys(state.friends)
+            .map(k => state.friends[k])
+            .filter(f => f.lineId);
+        if (lineContacts.length > 0) {
+            e.preventDefault();
+            const firstFriend = lineContacts[0];
+            window.open(`https://line.me/ti/p/~${firstFriend.lineId}`, '_blank');
+        }
+    });
+
+    document.getElementById('shortcut-ig-btn').addEventListener('click', (e) => {
+        const igContacts = Object.keys(state.friends)
+            .map(k => state.friends[k])
+            .filter(f => f.igUsername);
+        if (igContacts.length > 0) {
+            e.preventDefault();
+            const firstFriend = igContacts[0];
+            window.open(`https://instagram.com/_u/${firstFriend.igUsername}/`, '_blank');
+        }
+    });
 }
 
-// --- 5. POST SUBMISSION ---
+// --- 7. POST SUBMISSION (TO FIREBASE) ---
 
 function submitPost() {
     const postInput = document.getElementById('post-input');
     const content = postInput.value.trim();
     
-    // Check if empty
     if (!content && !photoAttachedBase64 && !voiceAttachedBase64) {
-        alert('請先輸入文字近況、拍照或錄製一段話！');
+        alert('請先輸入文字近況、上傳照片或錄音！');
         return;
     }
     
@@ -553,47 +596,67 @@ function submitPost() {
     const now = new Date();
     const timeString = `今天 ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
     
-    const currentUser = USER_PROFILES[state.currentUser];
-    
     const newPost = {
-        id: 'post_' + Date.now(),
-        author: state.currentUser,
+        authorName: state.currentUser.name,
         type: type,
         content: content || (type === 'photo' ? '分享了一張拍立得照片 ✨' : '留了一段語音悄悄話 🎧'),
         mediaData: mediaData,
         timestamp: timeString,
-        mood: currentUser.mood,
-        reactions: { love: [], hug: [], support: [], coffee: [] },
-        comments: []
+        createdAt: firebase.database.ServerValue.TIMESTAMP,
+        mood: state.currentUser.mood,
+        reactions: { love: {}, hug: {}, support: {}, coffee: {} },
+        comments: {}
     };
     
-    // Insert at top
-    state.posts.unshift(newPost);
-    savePostsToStorage();
-    
-    // If simulated user made a post, update their radar description too
-    if (state.currentUser !== 'user_me') {
-        state.friends[state.currentUser].status = content.substring(0, 15) + (content.length > 15 ? '...' : '');
-        state.friends[state.currentUser].lastActive = '剛剛';
-        saveFriendsToStorage();
-    }
-    
-    // Reset fields
-    postInput.value = '';
-    photoAttachedBase64 = null;
-    voiceAttachedBase64 = null;
-    voiceAttachedBlob = null;
-    
-    document.getElementById('photo-preview-container').classList.add('hidden');
-    document.getElementById('voice-preview-container').classList.add('hidden');
-    document.getElementById('photo-input').value = '';
-    
-    // Render and refresh
-    renderFeed(document.querySelector('.filter-btn.active').dataset.filter);
-    renderFriendsList();
+    // Save to Firebase (automatically pushes and syncs across friends)
+    db.ref(`groups/${state.groupCode}/posts`).push(newPost)
+        .then(() => {
+            // Reset fields
+            postInput.value = '';
+            photoAttachedBase64 = null;
+            voiceAttachedBase64 = null;
+            voiceAttachedBlob = null;
+            
+            document.getElementById('photo-preview-container').classList.add('hidden');
+            document.getElementById('voice-preview-container').classList.add('hidden');
+            document.getElementById('photo-input').value = '';
+            
+            // Keep radar status updated
+            db.ref(`groups/${state.groupCode}/users/${state.currentUser.name}`).update({
+                status: content.substring(0, 15) + (content.length > 15 ? '...' : '') || '剛發佈了點滴',
+                lastActive: Date.now()
+            });
+        })
+        .catch(err => {
+            console.error("Firebase error posting:", err);
+            alert("發佈失敗，請檢查您的網路連線。");
+        });
 }
 
-// --- 6. VOICE RECORDING LOGIC (MEDIARECORDER + WEB AUDIO SYNTH) ---
+// --- 8. COPY INVITE LINK ---
+
+function copyInviteLink() {
+    const inviteUrl = `${window.location.origin}${window.location.pathname}?invite=${state.groupCode}`;
+    
+    navigator.clipboard.writeText(inviteUrl)
+        .then(() => {
+            const btn = document.getElementById('copy-invite-btn');
+            const span = btn.querySelector('span');
+            span.textContent = '已複製邀請網址！';
+            btn.style.background = 'rgba(131, 197, 190, 0.2)';
+            
+            setTimeout(() => {
+                span.textContent = '複製專屬邀請連結';
+                btn.style.background = 'rgba(255,255,255,0.06)';
+            }, 2500);
+        })
+        .catch(err => {
+            console.error("Clipboard copy failed:", err);
+            alert(`複製失敗，請手動複製此邀請連結：\n${inviteUrl}`);
+        });
+}
+
+// --- 9. VOICE RECORDING (MEDIARECORDER + WEB AUDIO SYNTH) ---
 
 let mediaRecorder = null;
 let audioChunks = [];
@@ -604,7 +667,6 @@ function openVoiceRecorderModal() {
     const modal = document.getElementById('voice-modal');
     modal.classList.remove('hidden');
     
-    // Reset visualizer state
     document.getElementById('mic-icon').className = "fa-solid fa-microphone";
     document.getElementById('record-timer').textContent = "00:00";
     document.getElementById('recording-status').textContent = "點擊麥克風按鈕開始錄製 (限時10秒)";
@@ -616,7 +678,7 @@ function openVoiceRecorderModal() {
 }
 
 function closeVoiceRecorderModal() {
-    stopRecording(false); // Stop if active
+    stopRecording(false);
     document.getElementById('voice-modal').classList.add('hidden');
 }
 
@@ -648,13 +710,8 @@ function startRecording() {
         }
     }, 1000);
     
-    if (useMock) {
-        // Mock Audio Path
-        console.log("Using Mock Audio");
-        return;
-    }
+    if (useMock) return;
     
-    // Access Microphone API
     navigator.mediaDevices.getUserMedia({ audio: true })
         .then(stream => {
             mediaRecorder = new MediaRecorder(stream);
@@ -673,16 +730,15 @@ function startRecording() {
                 };
                 reader.readAsDataURL(audioBlob);
                 
-                // Stop all tracks to release microphone
                 stream.getTracks().forEach(track => track.stop());
             };
             
             mediaRecorder.start();
         })
         .catch(err => {
-            console.warn("Microphone access denied or error:", err);
+            console.warn("Microphone access denied:", err);
             document.getElementById('use-mock-audio').checked = true;
-            document.getElementById('recording-status').textContent = "系統已自動切換為語音模擬器（無麥克風權限）。";
+            document.getElementById('recording-status').textContent = "麥克風權限受阻，已切換至語音模擬器。";
         });
 }
 
@@ -693,22 +749,19 @@ function stopRecording(keepData) {
     clearInterval(recordTimerInterval);
     document.getElementById('voice-modal').classList.remove('recording');
     document.getElementById('mic-icon').className = "fa-solid fa-microphone";
-    document.getElementById('recording-status').textContent = keepData ? "錄製完成！點擊按鈕保存" : "已取消";
+    document.getElementById('recording-status').textContent = keepData ? "錄製完成！點擊儲存" : "已取消";
     
     const useMock = document.getElementById('use-mock-audio').checked;
     
     if (useMock && keepData) {
-        // Pre-fill a special mock identifier which will compile to synthetically synthesized notes on playback
         voiceAttachedBase64 = 'MOCK_SYNTH_AUDIO_' + Date.now();
         document.getElementById('save-recording').classList.remove('hidden');
     } else if (mediaRecorder && mediaRecorder.state !== 'inactive') {
         mediaRecorder.stop();
     }
     
-    // Save button trigger setup
     document.getElementById('save-recording').onclick = () => {
         if (voiceAttachedBase64) {
-            // Update preview card in panel
             const voicePreview = document.getElementById('voice-preview-container');
             voicePreview.querySelector('.voice-duration').textContent = document.getElementById('record-timer').textContent;
             voicePreview.classList.remove('hidden');
@@ -718,7 +771,7 @@ function stopRecording(keepData) {
     };
 }
 
-// --- 7. VOICE PLAYBACK CONTROL & WEB AUDIO SYNTHESIZER ---
+// --- 10. VOICE PLAYBACK CONTROL (BROWSER AUDIO / WEB SYNTH) ---
 
 let activeAudio = null;
 let activeAudioId = null;
@@ -731,24 +784,20 @@ function togglePlayVoice(postId, mediaData) {
     const audioEl = document.getElementById(`audio-el-${postId}`);
     const timeSpan = playerEl.querySelector('.curr-time');
     
-    // If clicking already active audio, pause it
     if (activeAudioId === postId) {
         pauseActiveAudio();
         return;
     }
     
-    // Pause any other playing audio
     pauseActiveAudio();
     
     activeAudioId = postId;
     playerEl.classList.add('playing');
     icon.className = "fa-solid fa-pause";
     
-    // Check if it's a simulated audio (Synthesizer Chimes)
     if (mediaData.startsWith('MOCK_')) {
         playSimulatedChimes(postId, playerEl, icon, timeSpan);
     } else {
-        // Actual browser audio playback
         activeAudio = audioEl;
         audioEl.currentTime = 0;
         audioEl.play();
@@ -759,9 +808,7 @@ function togglePlayVoice(postId, mediaData) {
             timeSpan.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
         };
         
-        audioEl.onended = () => {
-            pauseActiveAudio();
-        };
+        audioEl.onended = () => pauseActiveAudio();
     }
 }
 
@@ -775,14 +822,12 @@ function pauseActiveAudio() {
         playerEl.querySelector('.curr-time').textContent = "0:00";
     }
     
-    // If actual browser audio element
     if (activeAudio) {
         activeAudio.pause();
         activeAudio.currentTime = 0;
         activeAudio = null;
     }
     
-    // If simulation chime active
     if (synthInterval) {
         clearInterval(synthInterval);
         synthInterval = null;
@@ -791,47 +836,37 @@ function pauseActiveAudio() {
     activeAudioId = null;
 }
 
-// Generates warm, cozy synth bell chimes when playing a simulated note
 function playSimulatedChimes(postId, playerEl, icon, timeSpan) {
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    
-    // Play warm pentatonic scale chimes: G4, C5, D5, E5, G5, C6
     const notes = [392.00, 523.25, 587.33, 659.25, 783.99, 1046.50];
     let step = 0;
-    const maxSteps = 10; // 10 seconds
+    const maxSteps = 10;
     
     timeSpan.textContent = "0:00";
     
-    // Custom timer
     synthInterval = setInterval(() => {
         step++;
         timeSpan.textContent = `0:${step.toString().padStart(2, '0')}`;
         
-        // Synthesize single chimes
         if (step % 2 === 1) {
-            const randomNote1 = notes[Math.floor(Math.random() * notes.length)];
-            triggerSynthOscillator(audioCtx, randomNote1, 1.2);
+            const randomNote = notes[Math.floor(Math.random() * notes.length)];
+            triggerSynthOscillator(audioCtx, randomNote, 1.2);
         } else {
-            const randomNote1 = notes[Math.floor(Math.random() * 3)];
-            const randomNote2 = notes[Math.floor(Math.random() * 3) + 3];
-            triggerSynthOscillator(audioCtx, randomNote1, 0.8);
-            setTimeout(() => triggerSynthOscillator(audioCtx, randomNote2, 1.5), 180);
+            const rNote1 = notes[Math.floor(Math.random() * 3)];
+            const rNote2 = notes[Math.floor(Math.random() * 3) + 3];
+            triggerSynthOscillator(audioCtx, rNote1, 0.8);
+            setTimeout(() => triggerSynthOscillator(audioCtx, rNote2, 1.5), 180);
         }
         
-        if (step >= maxSteps) {
-            pauseActiveAudio();
-        }
+        if (step >= maxSteps) pauseActiveAudio();
     }, 1000);
     
-    // First immediate ring
     triggerSynthOscillator(audioCtx, notes[1], 1.5);
     setTimeout(() => triggerSynthOscillator(audioCtx, notes[4], 1.2), 250);
 }
 
 function triggerSynthOscillator(audioCtx, frequency, duration) {
-    if (audioCtx.state === 'suspended') {
-        audioCtx.resume();
-    }
+    if (audioCtx.state === 'suspended') audioCtx.resume();
     
     const osc = audioCtx.createOscillator();
     const gainNode = audioCtx.createGain();
@@ -842,40 +877,30 @@ function triggerSynthOscillator(audioCtx, frequency, duration) {
     osc.type = 'sine';
     osc.frequency.setValueAtTime(frequency, audioCtx.currentTime);
     
-    // Smooth attack and long warm decay
     gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
-    gainNode.gain.linearRampToValueAtTime(0.12, audioCtx.currentTime + 0.08); // 80ms attack
-    gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration); // long decay
+    gainNode.gain.linearRampToValueAtTime(0.12, audioCtx.currentTime + 0.08);
+    gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
     
     osc.start();
     osc.stop(audioCtx.currentTime + duration);
 }
 
-// --- 8. POST INTERACTIONS: REACTIONS & COMMENTS ---
+// --- 11. REACTIONS & COMMENTS (SYNCED TO FIREBASE) ---
 
 function reactToPost(postId, reactionType) {
-    const postIndex = state.posts.findIndex(p => p.id === postId);
-    if (postIndex === -1) return;
+    const post = state.posts.find(p => p.id === postId);
+    if (!post) return;
     
-    const post = state.posts[postIndex];
-    if (!post.reactions) post.reactions = { love: [], hug: [], support: [], coffee: [] };
+    const userReactPath = `groups/${state.groupCode}/posts/${postId}/reactions/${reactionType}/${state.currentUser.name}`;
     
-    const userList = post.reactions[reactionType] || [];
-    const userIndex = userList.indexOf(state.currentUser);
+    // Toggle reaction directly in Firebase
+    const hasReacted = post.reactions && post.reactions[reactionType] && post.reactions[reactionType][state.currentUser.name];
     
-    if (userIndex === -1) {
-        // Add reaction
-        userList.push(state.currentUser);
+    if (hasReacted) {
+        db.ref(userReactPath).remove();
     } else {
-        // Remove reaction
-        userList.splice(userIndex, 1);
+        db.ref(userReactPath).set(true);
     }
-    
-    post.reactions[reactionType] = userList;
-    savePostsToStorage();
-    
-    // Re-render only feed to update reaction numbers
-    renderFeed(document.querySelector('.filter-btn.active').dataset.filter);
 }
 
 function focusCommentInput(postId) {
@@ -897,34 +922,17 @@ function submitComment(postId) {
     const text = inputEl.value.trim();
     if (!text) return;
     
-    const postIndex = state.posts.findIndex(p => p.id === postId);
-    if (postIndex === -1) return;
-    
-    const newComment = {
-        author: state.currentUser,
+    const commentRef = db.ref(`groups/${state.groupCode}/posts/${postId}/comments`).push();
+    commentRef.set({
+        authorName: state.currentUser.name,
         text: text,
         timestamp: '剛剛'
-    };
-    
-    if (!state.posts[postIndex].comments) {
-        state.posts[postIndex].comments = [];
-    }
-    
-    state.posts[postIndex].comments.push(newComment);
-    savePostsToStorage();
-    
-    // Reset comment box
-    inputEl.value = '';
-    
-    // Re-render feed
-    renderFeed(document.querySelector('.filter-btn.active').dataset.filter);
-    
-    // Re-open and focus comment box if needed
-    const commentBox = document.getElementById(`comment-box-${postId}`);
-    commentBox.classList.remove('hidden');
+    }).then(() => {
+        inputEl.value = '';
+    });
 }
 
-// --- 9. UTILITY LIGHTBOX & ESCAPE HELPER ---
+// --- 12. UTILS ---
 
 function openLightbox(imgSrc, captionText) {
     const lightbox = document.getElementById('lightbox-modal');
@@ -945,5 +953,4 @@ function escapeHtml(unsafe) {
         .replace(/'/g, "&#039;");
 }
 
-// Run Initializer on window load
 window.addEventListener('DOMContentLoaded', initApp);

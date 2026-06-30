@@ -1434,3 +1434,48 @@ input:checked + .slider:before {
         padding-bottom: 4px;
     }
 }
+
+/* Onboarding & Space indicator styles */
+.space-indicator {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(131, 197, 190, 0.08);
+    border: 1px solid rgba(131, 197, 190, 0.25);
+    color: var(--color-mood-relaxed);
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 12.5px;
+    font-weight: 500;
+}
+
+.space-indicator i {
+    font-size: 13px;
+    animation: indicatorGlow 2s infinite alternate;
+}
+
+@keyframes indicatorGlow {
+    0% { filter: drop-shadow(0 0 1px var(--color-mood-relaxed)); }
+    100% { filter: drop-shadow(0 0 5px var(--color-mood-relaxed)); }
+}
+
+input[type="text"].custom-select {
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid var(--color-card-border);
+    color: var(--color-text-primary);
+    border-radius: var(--border-radius-sm);
+    outline: none;
+    transition: var(--transition-smooth);
+}
+
+input[type="text"].custom-select:focus {
+    border-color: rgba(167, 139, 250, 0.5);
+    background: rgba(0, 0, 0, 0.4);
+    box-shadow: 0 0 8px rgba(167, 139, 250, 0.15);
+}
+
+.onboard-form .form-group small {
+    display: block;
+    margin-top: 4px;
+}
+

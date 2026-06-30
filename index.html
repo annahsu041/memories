@@ -13,6 +13,10 @@
     <!-- Font Awesome Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
+    <!-- Firebase SDK (Compatibility version for static HTML import) -->
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-database-compat.js"></script>
+    
     <!-- Custom CSS -->
     <link rel="stylesheet" href="style.css">
 </head>
@@ -38,15 +42,10 @@
             </div>
             
             <div class="header-right">
-                <!-- User Simulator Switcher -->
-                <div class="user-simulator">
-                    <label for="user-select"><i class="fa-solid fa-user-gear"></i> 切換視角：</label>
-                    <select id="user-select" class="custom-select">
-                        <option value="user_me">我 (User)</option>
-                        <option value="friend_yuki">Yuki</option>
-                        <option value="friend_alan">Alan</option>
-                        <option value="friend_doris">Doris</option>
-                    </select>
+                <!-- Group Space Indicator -->
+                <div class="space-indicator">
+                    <i class="fa-solid fa-circle-nodes"></i>
+                    <span id="active-space-name">連線中...</span>
                 </div>
                 
                 <div class="time-widget" id="time-widget">
@@ -67,7 +66,7 @@
                         <div class="mood-glow" id="my-mood-glow"></div>
                     </div>
                     <h2 id="my-profile-name">我的狀態</h2>
-                    <p class="profile-role">當前情緒與生活氣氛</p>
+                    <p class="profile-role" id="my-profile-sub">當前情緒與生活氣氛</p>
                     
                     <!-- Mood Selection Wheel/Grid -->
                     <div class="mood-selector-container">
@@ -162,23 +161,29 @@
                 <div class="glass-card friends-radar">
                     <div class="radar-header">
                         <h2>摯友雷達</h2>
-                        <span class="active-badge"><span class="dot"></span> 4 人在線上</span>
+                        <span class="active-badge"><span class="dot"></span> <span id="friends-count">1</span> 人在線上</span>
                     </div>
                     
                     <div class="friends-list" id="friends-list">
                         <!-- Dynamic friends status list inserted here -->
                     </div>
+                    
+                    <!-- Copy Invite Link Button -->
+                    <button class="primary-btn" id="copy-invite-btn" style="width: 100%; justify-content: center; margin-top: 16px; font-size: 12px; background: rgba(255,255,255,0.06); color: #fff; box-shadow: none; border: 1px solid var(--color-card-border);">
+                        <i class="fa-solid fa-share-nodes"></i>
+                        <span>複製專屬邀請連結</span>
+                    </button>
                 </div>
 
                 <div class="glass-card connect-box">
                     <h3>快速聯繫通道</h3>
                     <p class="connect-desc">想念對方了嗎？一鍵發起深度對話或通話吧！</p>
                     <div class="connect-channels">
-                        <a href="https://line.me/tw/" target="_blank" class="channel-btn line">
+                        <a href="https://line.me/tw/" target="_blank" class="channel-btn line" id="shortcut-line-btn">
                             <i class="fa-brands fa-line"></i>
                             <span>LINE</span>
                         </a>
-                        <a href="https://instagram.com" target="_blank" class="channel-btn ig">
+                        <a href="https://instagram.com" target="_blank" class="channel-btn ig" id="shortcut-ig-btn">
                             <i class="fa-brands fa-instagram"></i>
                             <span>Instagram</span>
                         </a>
@@ -195,6 +200,43 @@
             </section>
 
         </main>
+    </div>
+
+    <!-- Onboarding / Welcome Modal -->
+    <div class="modal-overlay hidden" id="onboard-modal" style="background: rgba(0, 0, 0, 0.85);">
+        <div class="glass-card modal-content" style="max-width: 480px; text-align: left; padding: 28px;">
+            <h2 style="font-size: 22px; text-align: center; margin-bottom: 8px; font-weight: 700; background: var(--gradient-accent-1); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">歡迎來到 HeartSpace</h2>
+            <p style="text-align: center; margin-bottom: 24px; font-size: 13px;">專屬摯友的情緒與生活空間。首次使用，請填寫您的基本資訊：</p>
+            
+            <div class="onboard-form" style="display: flex; flex-direction: column; gap: 16px;">
+                <div class="form-group" style="display: flex; flex-direction: column; gap: 6px;">
+                    <label for="onboard-name" style="font-size: 12.5px; font-weight: 500; color: var(--color-text-secondary);"><i class="fa-solid fa-user" style="margin-right: 4px;"></i> 您的名字/暱稱 <span style="color:var(--color-mood-busy)">*</span></label>
+                    <input type="text" id="onboard-name" class="custom-select" style="width: 100%; padding: 8px 12px; font-size:13.5px;" placeholder="例如：小明 / Hanna" required>
+                </div>
+                
+                <div class="form-group" style="display: flex; flex-direction: column; gap: 6px;">
+                    <label for="onboard-invite" style="font-size: 12.5px; font-weight: 500; color: var(--color-text-secondary);"><i class="fa-solid fa-key" style="margin-right: 4px;"></i> 邀請/群組代碼 (Group Code) <span style="color:var(--color-mood-busy)">*</span></label>
+                    <input type="text" id="onboard-invite" class="custom-select" style="width: 100%; padding: 8px 12px; font-size:13.5px;" placeholder="例如：SWEET-HOME" required>
+                    <small style="font-size: 10.5px; color: var(--color-text-muted); line-height: 1.3;">請填入與好友約定好的代碼。若要建立新空間，可自行輸入一組獨特的英文代碼。</small>
+                </div>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                    <div class="form-group" style="display: flex; flex-direction: column; gap: 6px;">
+                        <label for="onboard-line" style="font-size: 12px; color: var(--color-text-secondary);"><i class="fa-brands fa-line" style="color: #06C755; margin-right: 4px;"></i> LINE ID (選填)</label>
+                        <input type="text" id="onboard-line" class="custom-select" style="width: 100%; padding: 8px 12px; font-size:13px;" placeholder="e.g. user123">
+                    </div>
+                    <div class="form-group" style="display: flex; flex-direction: column; gap: 6px;">
+                        <label for="onboard-ig" style="font-size: 12px; color: var(--color-text-secondary);"><i class="fa-brands fa-instagram" style="color: #e6683c; margin-right: 4px;"></i> IG 帳號 (選填)</label>
+                        <input type="text" id="onboard-ig" class="custom-select" style="width: 100%; padding: 8px 12px; font-size:13px;" placeholder="e.g. hanna_041">
+                    </div>
+                </div>
+            </div>
+            
+            <button class="primary-btn" id="start-onboard-btn" style="width: 100%; justify-content: center; padding: 12px; margin-top: 24px; font-size:14px;">
+                <span>開啟並進入溫暖小空間</span>
+                <i class="fa-solid fa-heart-pulse"></i>
+            </button>
+        </div>
     </div>
 
     <!-- Voice Recording Modal -->
